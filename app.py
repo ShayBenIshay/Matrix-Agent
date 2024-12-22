@@ -15,10 +15,11 @@ load_dotenv()
 
 openai_api_key = os.getenv("OPENAI_API_KEY")
 polygon_api_key = os.getenv("POLYGON_API_KEY")
+frontend_url = os.getenv("FRONTEND_URL")
 
 app = Flask(__name__)
 
-CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}})
+CORS(app, resources={r"/*": {"origins": frontend_url}})
 
 @app.route("/")
 def hello_world():
