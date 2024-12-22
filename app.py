@@ -32,12 +32,9 @@ def agent():
     response = requests.get(url)
     response_json = response.json()
     response_str = response_json['response']
-    print(response_str)
     my_portfolio = parse_portfolio(response_str)
-    print(my_portfolio)
 
     portfolio_json = json.dumps(my_portfolio, indent=4)
-    print(portfolio_json)
     return get_trade(my_portfolio)
 
 
@@ -70,11 +67,8 @@ def portfolio():
             max_tokens=256,
             top_p=1,
         )
-        print(completion.choices[0].message.content)
         my_portfolio = parse_portfolio(completion.choices[0].message.content)
-        print(my_portfolio)
         portfolio_json = json.dumps(my_portfolio, indent=4)
-        print(portfolio_json)
         return jsonify(portfolio_json)
         # return jsonify({"response": completion.choices[0].message.content})
     except Exception as e:
@@ -135,7 +129,6 @@ def trade():
             }
 
             json_data = json.dumps(parsed_data, indent=2)
-            print(json_data)
             return json_data
         else:
             print("Failed to parse input string.")
