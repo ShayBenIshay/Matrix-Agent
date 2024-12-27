@@ -3,13 +3,12 @@ from flask_cors import CORS
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
-from agent import get_date_x_days_ago
-from datetime import datetime
+from utils import get_date_x_days_ago
 import requests
 import re
 import json
-from agent import parse_portfolio
-from agent import get_trade
+from utils import parse_portfolio
+from utils import convert_to_object
 
 load_dotenv()
 
@@ -25,34 +24,20 @@ CORS(app, resources={r"/*": {"origins": frontend_url}})
 def hello_world():
     return "hello world"
 
-@app.route("/agent")
-def agent():
-    url = "http://127.0.0.1:5000/portfolio"
-
-    response = requests.get(url)
-    response_json = response.json()
-    response_str = response_json['response']
-    my_portfolio = parse_portfolio(response_str)
-
-    portfolio_json = json.dumps(my_portfolio, indent=4)
-    return get_trade(my_portfolio)
-
-
 @app.route("/portfolio")
 def portfolio():
     cash = request.args.get("cash")
 
-    system_content = (f"Your answer will be in this format: table,empty line,explanation"
-                       f"the 3 lines table should have: Ticker, Percentage, value. and the explanation will be 2 "
-                      f"lines")
+    system_content = (f"format: 1. a table with these headers: ticker, percentage, value. 2. empty line 3.short "
+                      f"explanation. the tickers column should be valid wall street tickers. ")
 
-    user_preferences = (f"How to build my portfolio: "
-                        f"Steady part - 60% of ETFs that tracks the S&P 500 and NASDAQ-100 "
-                        f"Active part - 40% where you are swinging days to weeks trades. ")
+    user_preferences = (f"I want to build a portfolio that is: "
+                        f"60% low risk ETFs "
+                        f"40% trades. ")
 
-    user_content = (f"I have {cash}$ and i want to build a portfolio."
-                    f"I would like to invest in small portion on BITCOIN for he long term."
-                    f"I like specific stocks like TSLA,NVDA")
+    user_content = (f"I have {cash}$ ."
+                    f"I want my portfolio to have maximum 4 assets and to be 5% exposed to Bitcoin. choose how to spread "
+                    f"the portfolio")
 
 
     try:
@@ -69,47 +54,51 @@ def portfolio():
         )
         my_portfolio = parse_portfolio(completion.choices[0].message.content)
         portfolio_json = json.dumps(my_portfolio, indent=4)
-        return jsonify(portfolio_json)
-        # return jsonify({"response": completion.choices[0].message.content})
+        portfolioObject = convert_to_object(portfolio_json)
+        return portfolioObject
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route("/trade", methods=["GET"])
 def trade():
     ticker = request.args.get("ticker")
-    count = request.args.get("count")
+    from_date = request.args.get("from_date")
+    to_date = request.args.get("to_date")
     timespan = request.args.get("timespan")
-
-    from_date = get_date_x_days_ago(43)
-    to_date = datetime.now().strftime("%Y-%m-%d")
 
     url= (f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/{timespan}/{from_date}"
           f"/{to_date}?adjusted=true&sort=asc&apiKey={polygon_api_key}")
-    history_json={}
+
     try:
         response = requests.get(url)
-        response.raise_for_status()  # Raise an HTTPError for bad responses (4xx and 5xx)
-        # Parse the JSON response to a string and save it in the history dictionary
+        response.raise_for_status()
+
         history_json = response.json()
-        print(f"Data fetched and saved successfully.")
+        resultsCount = history_json["resultsCount"]
+        history = history_json["results"]
+        print(f"Data fetched successfully.")
     except requests.exceptions.RequestException as e:
         print(f"An error occurred while fetching the data: {e}")
 
-    history_str = json.dumps(history_json)
+    resultsCount = json.dumps(resultsCount)
+    history = json.dumps(history)
 
     system_content = (f"Your answer will be in this format: answer,empty line,explanation"
                       f"answer will be 1 line: buy: x,stop: y, profit: z")
                       # f"You are a low risk trader, swinging in a days to weeks time period. "
                       # f"When the user share stock information you will make a technical analysis base of it")
-    user_content = f"Tell me based on this information of the last {count} {timespan}s: "
-
+    user_content = (f"I want you analyze this trade based on the information i will share. what is the buy "
+                    f"limit, stop loss order and profit take"
+                    f"The next array is candles of ticker {ticker} from the oldest to today "
+                    f"The candles: c = close, h = high, l = low, o = open, v = volume."
+                    f"{resultsCount} days history: {history}")
     try:
         client = OpenAI(api_key=openai_api_key)
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_content},
-                {"role": "user", "content": user_content + history_str},
+                {"role": "user", "content": user_content },
             ],
             temperature=0.8,
             max_tokens=256,
@@ -133,7 +122,6 @@ def trade():
         else:
             print("Failed to parse input string.")
 
-        # return jsonify({"response": completion.choices[0].message.content})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
