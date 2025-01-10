@@ -3,12 +3,8 @@ from flask_cors import CORS
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
-from utils import get_date_x_days_ago
 import requests
-import re
 import json
-from utils import parse_portfolio
-from utils import convert_to_object
 
 load_dotenv()
 
@@ -24,38 +20,88 @@ CORS(app, resources={r"/*": {"origins": frontend_url}})
 def hello_world():
     return "hello world"
 
-@app.route("/portfolio")
-def portfolio():
-    cash = request.args.get("cash")
+@app.route('/manipulate-portfolio', methods=['POST'])
+def manipulate_portfolio():
+    data = request.get_json()
 
-    system_content = (f"format: 1. a table with these headers: ticker, percentage, value. 2. empty line 3.short "
-                      f"explanation. the tickers column should be valid wall street tickers. ")
+    if not data:
+        return jsonify({"error": "Invalid JSON body"}), 400
 
-    user_preferences = (f"I want to build a portfolio that is: "
-                        f"60% low risk ETFs "
-                        f"40% trades. ")
+    # Log each parameter
+    cash = data.get("cash")
+    additional_info = data.get("additionalInfo")
+    print(additional_info)
+    additional_info = ""
+    totals = data.get("totals")
 
-    user_content = (f"I have {cash}$ ."
-                    f"I want my portfolio to have maximum 4 assets and to be 5% exposed to Bitcoin. choose how to spread "
-                    f"the portfolio")
+    system_content = ("""
+                    You are a financial broker investing for the long term. you need to decide if and how to 
+                    manipulate the portfolio of the user.
+                    you will receive the cash amount, the position on each stock with additional calculations.
+                    Respond with the following JSON without any markdowns and surroundings::
+                    {
+                        "analysis": string (A short analysis of the data),
+                        "portfolio": 
+                        [{
+                            "percentage": float (the percentage from my portfolio),
+                            "ticker": string (valid wall street ticker Symbol)
+                        }]
+                    }
+                    """)
 
+    user_preferences = (f"""I want you to decide after analyzing of the market if and how to change my portfolio. 
+                        This is my current portfolio:
+                        {totals}
+                        i also have liquid cash: {cash}
+                        {additional_info}
+                        your mission is decide how my portfolio should look today after your analyze.
+                        """)
 
     try:
         client = OpenAI(api_key=openai_api_key)
         completion = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_content},
-                {"role": "user", "content": user_preferences+user_content},
+                {"role": "user", "content": user_preferences},
             ],
             temperature=0.8,
-            max_tokens=256,
-            top_p=1,
         )
-        my_portfolio = parse_portfolio(completion.choices[0].message.content)
-        portfolio_json = json.dumps(my_portfolio, indent=4)
-        portfolioObject = convert_to_object(portfolio_json)
-        return portfolioObject
+        return completion.choices[0].message.content
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/portfolio")
+def portfolio():
+    userPreference = request.args.get("userPreference")
+    print("userPreference " +userPreference)
+
+    system_content = ("""
+    You are a financial broker investing for the long term, helping clients to create portfolio.
+    Respond with the following JSON without any markdowns and surroundings::
+    {
+        "analysis": string (A short analysis of the data),
+        "portfolio": 
+        [{
+            "percentage": float (the percentage from my portfolio),
+            "ticker": string (valid wall street ticker Symbol)
+        }]
+    }
+    """)
+
+    user_preferences = (f"I want to invest in techonology and semiconductor industtries.")
+
+    try:
+        client = OpenAI(api_key=openai_api_key)
+        completion = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_preferences},
+            ],
+            temperature=0.8,
+        )
+        return completion.choices[0].message.content
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -83,44 +129,31 @@ def trade():
     resultsCount = json.dumps(resultsCount)
     history = json.dumps(history)
 
-    system_content = (f"Your answer will be in this format: answer,empty line,explanation"
-                      f"answer will be 1 line: buy: x,stop: y, profit: z")
-                      # f"You are a low risk trader, swinging in a days to weeks time period. "
-                      # f"When the user share stock information you will make a technical analysis base of it")
-    user_content = (f"I want you analyze this trade based on the information i will share. what is the buy "
+    system_content = ("""Respond with the following JSON without any markdowns and surroundings:
+                      {
+                        "analysis": string (A short analysis of the data),
+                        "buy": float,
+                        "stop loss": float,
+                        "take profit": float,
+                      """)
+
+    user_content = (f"I want you to analyze this trade based on the information i will share. what is the buy "
                     f"limit, stop loss order and profit take"
-                    f"The next array is candles of ticker {ticker} from the oldest to today "
+                    f"The next array is {resultsCount} days candles of a ticker {ticker} from the oldest to today."
                     f"The candles: c = close, h = high, l = low, o = open, v = volume."
-                    f"{resultsCount} days history: {history}")
+                    f"{history}")
     try:
         client = OpenAI(api_key=openai_api_key)
         completion = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": user_content },
             ],
             temperature=0.8,
-            max_tokens=256,
-            top_p=1,
         )
 
-        first_line = completion.choices[0].message.content.split('\n')[0]
-        pattern = r"buy: ([\d.]+), stop: ([\d.]+), profit: ([\d.]+)"
-        match = re.match(pattern, first_line)
-
-        if match:
-            parsed_data = {
-                "buy": float(match.group(1)),
-                "stop": float(match.group(2)),
-                "profit": float(match.group(3)),
-                "ticker": ticker
-            }
-
-            json_data = json.dumps(parsed_data, indent=2)
-            return json_data
-        else:
-            print("Failed to parse input string.")
+        return completion.choices[0].message.content
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -132,18 +165,29 @@ def tweet():
     operation = request.args.get("operation")
     papers = request.args.get("papers")
 
-    content = f"{operation} {papers} stocks of {ticker} at {price}"
+    system_content = """
+    You are a financial analyst that write tweets about your trades.
+    """
+    user_content = f"""
+    I just made this operation:
+    {operation} {papers} stocks of {ticker} at {price}
+    this was my analysis: 
+    The recent trend in MSFT shows a recovery after a period of decline, marked by higher 
+    highs and higher lows
+    in the latter candles. The volume shows a consistent level of activity, indicating strong interest in the stock. The
+    recent pullback offers a potential buy opportunity if the trend continues.
+    --
+    Your mission is to make a tweet about the trade. (optional) consider adding a short explanation about the trade.
+    """
     try:
         client = OpenAI(api_key=openai_api_key)
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a financial analyst that write tweets about your trades. the user will provide a trade and you will write a tweet about it"},
-                {"role": "user", "content": content},
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_content},
             ],
             temperature=0.8,
-            max_tokens=256,
-            top_p=1,
         )
         return jsonify({"response": completion.choices[0].message.content})
     except Exception as e:
